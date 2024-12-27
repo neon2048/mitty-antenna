@@ -41,6 +41,7 @@ async fn check_terminal_updates(
     console_error_panic_hook::set_once();
 
     let webhook = env.secret("DISCORD_WEBHOOK")?.to_string();
+    let roleid = env.secret("DISCORD_ROLE_ID")?.to_string();
 
     let body = get_terminal_body(TERMINAL_URL).await?;
 
@@ -49,14 +50,17 @@ async fn check_terminal_updates(
     let db = env.d1("DB")?;
 
     for update in updates.into_iter().rev() {
-        let msg = format!("{}", update.body);
+        let msg = format!(
+            "New transmission from Mitty received <@&{}>\n>>> **{}**: {}",
+            roleid, update.title, update.body
+        );
 
         let statement = db.prepare("SELECT body, title FROM MittyUpdates WHERE body = ?1");
         let query = statement.bind(&[update.body.clone().into()])?;
         let result = query.first::<MittyUpdate>(None).await?;
 
         match result {
-            Some(_) => return Ok(()),
+            Some(_) => (),
             None => {
                 let _res = send_message(&webhook, &msg).await?;
                 let statement =
