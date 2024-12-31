@@ -49,42 +49,61 @@ async fn check_terminal_updates(
 
     let db = env.d1("DB")?;
 
-    for update in updates.into_iter().rev() {
-        let msg = format!(
-            "New transmission from Mitty received <@&{}>\n>>> **{}**: {}",
-            roleid, update.title, update.body
-        );
+    let select_stmt = db.prepare("SELECT body, title FROM MittyUpdates WHERE body = ?1");
+    let update_stmt = db.prepare("INSERT INTO MittyUpdates (title, body) VALUES (?1, ?2)");
 
-        let statement = db.prepare("SELECT body, title FROM MittyUpdates WHERE body = ?1");
-        let query = statement.bind(&[update.body.clone().into()])?;
-        let result = query.first::<MittyUpdate>(None).await?;
+    let queries = updates.iter().rev().map(|update| {
+        let q = select_stmt
+            .clone()
+            .bind(&[update.body.clone().into()])
+            .expect("Failed to bind parameters in SELECT statement");
 
+        async move { q.first::<MittyUpdate>(None).await }
+    });
+
+    let results = futures::future::join_all(queries).await;
+
+    let mut inserts: Vec<_> = Vec::new();
+
+    for (result, update) in results.into_iter().zip(updates.into_iter().rev()) {
         match result {
-            Some(_) => (),
-            None => {
+            Err(e) => return Err(MittyAntennaError::from(e)),
+            Ok(Some(_)) => (),
+            Ok(None) => {
+                let msg = format!(
+                    "New transmission from Mitty received <@&{}>\n>>> **{}**: {}",
+                    roleid, update.title, update.body
+                );
                 let _res = send_message(&webhook, &msg).await?;
-                let statement =
-                    db.prepare("INSERT INTO MittyUpdates (title, body) VALUES (?1, ?2)");
-                let query = statement.bind(&[update.title.into(), update.body.into()])?;
-                let _ = query.run().await?;
-                console_log!("new message stored")
+                let query = update_stmt
+                    .clone()
+                    .bind(&[update.title.into(), update.body.into()])?;
+                inserts.push(async move { query.first::<MittyUpdate>(None).await });
             }
-        };
+        }
     }
+
+    let results: Result<Vec<_>, _> = futures::future::join_all(inserts)
+        .await
+        .into_iter()
+        .collect();
+
+    match results {
+        Ok(v) => console_log!("{} new message(s) stored", v.len()),
+        Err(e) => console_error!("Database update failed: {}", e),
+    }
+
     Ok(())
 }
 
-async fn send_message(webhook: &str, message: &str) -> Result<(), reqwest::Error> {
+async fn send_message(webhook: &str, message: &str) -> Result<reqwest::Response, reqwest::Error> {
     let mut map = HashMap::new();
     map.insert("content", message);
     let client = reqwest::Client::new();
 
     let resp = client.post(webhook).json(&map).send().await?;
 
-    match resp.error_for_status() {
-        Ok(_) => return Ok(()),
-        Err(e) => return Err(e),
-    }
+    resp.error_for_status()
 }
 
 async fn get_terminal_body(url: &str) -> Result<String, reqwest::Error> {
