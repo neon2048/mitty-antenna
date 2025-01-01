@@ -78,6 +78,7 @@ async fn check_terminal_updates(
                     roleid, update.title, update.body
                 );
                 if let Ok(_res) = send_message(&webhook, &msg).await {
+                    console_log!("New Discord message posted: {}", msg);
                     let query = update_stmt
                         .clone()
                         .bind(&[update.title.into(), update.body.into()])
@@ -97,7 +98,7 @@ async fn check_terminal_updates(
         .collect();
 
     match results {
-        Ok(v) => console_log!("{} new message(s) stored", v.len()),
+        Ok(v) => console_log!("{} new message(s) processed", v.len()),
         Err(e) => console_error!("Database update failed: {}", e),
     }
 
