@@ -50,7 +50,6 @@ async fn check_terminal_updates(
     let db = env.d1("DB")?;
 
     let select_stmt = db.prepare("SELECT body, title FROM MittyUpdates WHERE body = ?1");
-    let update_stmt = db.prepare("INSERT INTO MittyUpdates (title, body) VALUES (?1, ?2)");
 
     let queries = updates.iter().rev().map(|update| {
         let q = select_stmt
@@ -65,7 +64,8 @@ async fn check_terminal_updates(
 
     let mut inserts: Vec<_> = Vec::new();
 
-    for (result, update) in results.into_iter().zip(updates.into_iter().rev()) {
+    let update_stmt = db.prepare("INSERT INTO MittyUpdates (title, body) VALUES (?1, ?2)");
+    'forloop: for (result, update) in results.into_iter().zip(updates.into_iter().rev()) {
         match result {
             Err(e) => return Err(MittyAntennaError::from(e)),
             Ok(Some(_)) => (),
@@ -74,11 +74,16 @@ async fn check_terminal_updates(
                     "New transmission from Mitty received <@&{}>\n>>> **{}**: {}",
                     roleid, update.title, update.body
                 );
-                let _res = send_message(&webhook, &msg).await?;
-                let query = update_stmt
-                    .clone()
-                    .bind(&[update.title.into(), update.body.into()])?;
-                inserts.push(async move { query.first::<MittyUpdate>(None).await });
+                if let Ok(_res) = send_message(&webhook, &msg).await {
+                    let query = update_stmt
+                        .clone()
+                        .bind(&[update.title.into(), update.body.into()])
+                        .expect("Failed to bind parameters in UPDATE statement");
+
+                    inserts.push(async move { query.first::<MittyUpdate>(None).await });
+                } else {
+                    break 'forloop;
+                }
             }
         }
     }
