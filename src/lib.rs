@@ -67,7 +67,10 @@ async fn check_terminal_updates(
     let update_stmt = db.prepare("INSERT INTO MittyUpdates (title, body) VALUES (?1, ?2)");
     'forloop: for (result, update) in results.into_iter().zip(updates.into_iter().rev()) {
         match result {
-            Err(e) => return Err(MittyAntennaError::from(e)),
+            Err(e) => {
+                console_error!("{}", e);
+                break 'forloop;
+            }
             Ok(Some(_)) => (),
             Ok(None) => {
                 let msg = format!(
